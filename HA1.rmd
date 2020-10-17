@@ -155,7 +155,7 @@ has a lower bias and variance indicates that OLS (p=100) might be overfitting in
 this case.
 
 Another explanation could be that since there is some correlation between
-features we can drop a few and improve performance. We can check this logic in
+features we can drop a few and improve performance. We can verify this logic in
 part 4.
 
 ### Part 3
@@ -278,5 +278,5 @@ p+labs(x = "Estimation Error", y = "Density",caption ="Red:Lasso; Blue:OLS" )+
 ```
 
 What is perhaps a bit surprising is that LASSO performs better even in the 4th
-case when the features in X are not correlated. It maybe then that the 
+case when the features in X are not correlated. It maybe the case that the 
 penalization is reducing overfitting and not correcting for multicollinearity.
