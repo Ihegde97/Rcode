@@ -1,0 +1,287 @@
+---
+title: "HA8"
+author: "Ishwara Hegde"
+date: "11/24/2020"
+output: html_document
+---
+
+# 2.1 
+
+## Preamble 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+#load all packages necessary in one go
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, data.table, modelsummary,Matrix,
+               broom,kableExtra,synthdid,patchwork)
+```
+## 1. 
+
+Just normalizing the data using the "grand" mean and standard deviation:
+
+```{r load_data}
+#Load the workspace provided 
+rm(list=ls())
+load("cps_data.rData")
+Y_bar<-mean(Y)
+Y_sd<-sd(Y)
+#Convert both to data.table format 
+
+D<-as.matrix(D)
+
+set.seed(925510415)
+#defining some useful parameters
+n<-50
+T<-40
+T_0<-30
+
+#normalize the data 
+Y_norm<-(Y - mean(Y))/sd(Y)
+```
+
+## 2. 
+
+```{r pressure, echo=FALSE}
+#Finding the rank of the matrix
+#rank<-as.numeric(rankMatrix(Y_norm))
+
+#Creating M and E
+S<-svd(Y_norm)
+U<-as.matrix(S$u)
+V<-as.matrix(S$v)
+sigma<-as.matrix(S$d)
+
+M<-U[,1:4]%*%diag(sigma[1:4])%*%t(V[,1:4])
+E<-U[,5:T]%*%diag(sigma[5:T])%*%t(V[,5:T])
+
+# sigma squared epsilon:
+sigma_epsilon<-sum(E^2)/(50*40)
+```
+
+## 3. 
+```{r decompose}
+one_n<-matrix(rep(1,50),nrow=50,ncol=1)
+one_t<-matrix(rep(1,40),nrow=40,ncol=1)
+F<-(one_n%*%t(one_n)%*%M)*(1/50)+(M%*%one_t%*%t(one_t))*(1/40)
+
+L<-M-F
+
+```
+
+## 4. 
+```{r logit}
+temp<-cbind.data.frame(D,U[,1:4])
+setnames(temp,c("D","u1","u2","u3","u4"))
+
+logit_fit<- glm(D~u1+u2+u3+u4, family = 'binomial',data=temp)
+new_data <- temp %>% select(-D)
+pi <- as.matrix(predict.glm(logit_fit,newdata = new_data,
+                            type = 'response'),nrow=50,ncol=1)
+
+
+```
+
+## 5. 
+```{r DGP}
+
+dgp<-function(alpha_0,alpha_1){
+        epsilon<-matrix(rnorm(T*n, mean=0, sd = sqrt(sigma_epsilon)), n, T)
+        Y<-alpha_0*F +alpha_1*L+epsilon
+        A<-rbinom(n=n,p=pi,size=1)
+        W<-cbind(matrix(0, nrow=n, ncol=T_0), matrix(1, nrow=n, ncol=T-T_0))*A
+        list_return<-list("Y"=Y,"W"=W)
+        return(list_return)
+}
+
+```
+
+## 6. 
+```{r simulation}
+B<-400
+results<-matrix(-999,nrow=B,ncol=3)
+for (b in 1:B){
+        
+        sim<-dgp(1,1)
+        sim_order<-order(sim$W[,40])
+        Y<-sim$Y[sim_order,]
+        W<-sim$W[sim_order,]
+        n_0<-n-sum(W[,40])
+        results[b,1]<-did_estimate(Y=Y,T0=T_0,N0=n_0)
+        results[b,2]<-synthdid_estimate(Y,T0=T_0,N0=n_0)
+        results[b,3]<-sc_estimate(Y,T0=T_0,N0=n_0)
+        
+}
+tau_hat_1<-data.table(results)
+setnames(tau_hat_1,c("DiD","Synthetic DID","Synthetic Control"))
+
+#bias of the estimates
+bias_1<-tau_hat_1[ ,lapply(.SD, mean)]
+
+
+#RMSE of the estimates
+
+#Define a function that I will use later 
+rmse<-function(x){return(sqrt(mean(x^2)))}
+rmse_1<-tau_hat_1[,lapply(.SD,rmse)]
+
+```
+
+I put all the plots at the end for easy comparison (we can move this if 
+it does not work)
+ 
+
+## 8. 
+```{r resim}
+# alpha_0=1, alpha_1=0
+B<-400
+results2<-matrix(-999,nrow=B,ncol=3)
+for (b in 1:B){
+        
+        sim<-dgp(1,0)
+        sim_order<-order(sim$W[,40])
+        Y<-sim$Y[sim_order,]
+        W<-sim$W[sim_order,]
+        n_0<-n-sum(W[,40])
+        results2[b,1]<-did_estimate(Y=Y,T0=T_0,N0=n_0)
+        results2[b,2]<-synthdid_estimate(Y,T0=T_0,N0=n_0)
+        results2[b,3]<-sc_estimate(Y,T0=T_0,N0=n_0)
+        
+}
+tau_hat_2<-data.table(results2)
+setnames(tau_hat_2,c("DiD","Synthetic DID","Synthetic Control"))
+
+#bias of the estimates
+bias_2<-tau_hat_2[ ,lapply(.SD, mean)]
+
+
+#RMSE of the estimates
+
+rmse_2<-tau_hat_2[,lapply(.SD,rmse)]
+
+
+```
+
+
+```{r resim2}
+# alpha_0=0, alpha_1=1
+B<-400
+results3<-matrix(-999,nrow=B,ncol=3)
+for (b in 1:B){
+        
+        sim<-dgp(0,1)
+        sim_order<-order(sim$W[,40])
+        Y<-sim$Y[sim_order,]
+        W<-sim$W[sim_order,]
+        n_0<-sum(W[,40])
+        results3[b,1]<-did_estimate(Y=Y,T0=T_0,N0=n_0)
+        results3[b,2]<-synthdid_estimate(Y,T0=T_0,N0=n_0)
+        results3[b,3]<-sc_estimate(Y,T0=T_0,N0=n_0)
+        
+}
+tau_hat_3<-data.table(results3)
+setnames(tau_hat_3,c("DiD","Synthetic DID","Synthetic Control"))
+
+#bias of the estimates
+bias_3<-tau_hat_3[ ,lapply(.SD, mean)]
+
+
+#RMSE of the estimates
+
+rmse_3<-tau_hat_3[,lapply(.SD,rmse)]
+
+```
+
+
+## 9 
+```{r func2}
+pi_bar<-mean(pi)
+dgp2<-function(alpha_0,alpha_1){
+        epsilon<-matrix(rnorm(5,0,1),nrow=n,ncol=T)
+        Y<-alpha_0*F +alpha_1*L+epsilon
+        A<-rbinom(n=n,p=pi_bar,size=1)
+        W<-cbind(matrix(0, nrow=n, ncol=T_0), matrix(1, nrow=n, ncol=T-T_0))*A
+        list_return<-list("Y"=Y,"W"=W)
+        return(list_return)
+}
+
+
+
+```
+
+```{r sim3}
+B<-400
+results4<-matrix(-999,nrow=B,ncol=3)
+for (b in 1:B){
+        
+        sim<-dgp(1,1)
+        sim_order<-order(sim$W[,40])
+        Y<-sim$Y[sim_order,]
+        W<-sim$W[sim_order,]
+        n_0<-sum(W[,40])
+        results4[b,1]<-did_estimate(Y=Y,T0=T_0,N0=n_0)
+        results4[b,2]<-synthdid_estimate(Y,T0=T_0,N0=n_0)
+        results4[b,3]<-sc_estimate(Y,T0=T_0,N0=n_0)
+        
+}
+tau_hat_4<-data.table(results4)
+setnames(tau_hat_4,c("DiD","Synthetic DID","Synthetic Control"))
+
+#bias of the estimates
+bias_4<-tau_hat_4[ ,lapply(.SD, mean)]
+
+
+#RMSE of the estimates
+rmse_4<-tau_hat_4[,lapply(.SD,rmse)]
+
+
+```
+
+
+## 7. Plots
+
+```{r plot_func}
+plotting_func<-function(data,x_string){
+        p<- ggplot(data=data,mapping = aes(x=x_string))+
+        geom_density()+ geom_vline(xintercept=0,linetype="dotted",color="blue")+
+                theme_minimal()
+        return(p)
+}
+
+
+#Creating the plots from DGP 1 
+
+p1<-plotting_func(data=tau_hat_1,x_string = tau_hat_1$DiD)+xlab("DiD")
+p2<-plotting_func(data=tau_hat_1,x_string = tau_hat_1$`Synthetic DID`)+
+        xlab("Synthetic DiD")
+p3<-plotting_func(data=tau_hat_1,x_string = tau_hat_1$`Synthetic Control`)+
+        xlab("Synthetic Control")
+
+#Plots from sim2
+p_dgp1<-p1+p2+p3+plot_annotation(
+  title = "DGP 1:Figure for Part 7.",
+  subtitle= "alph_0=alpha_1=1"
+)
+```
+
+```{r,  plot2}
+p4<-plotting_func(data=tau_hat_4,x_string = tau_hat_4$DiD)+xlab("DiD")
+p5<-plotting_func(data=tau_hat_4,x_string = tau_hat_4$`Synthetic DID`)+
+        xlab("Synthetic DiD")
+p6<-plotting_func(data=tau_hat_4,x_string = tau_hat_4$`Synthetic Control`)+
+        xlab("Synthetic Control")
+
+#Plots from sim2
+p_dgp2<-p4+p5+p6+plot_annotation(
+  title = "DGP 2:Figure for Part 9.",
+  subtitle= "alph_0=alpha_1=1"
+)
+
+
+```
+
+```{r disp_plot}
+p_dgp1
+p_dgp2
+
+```

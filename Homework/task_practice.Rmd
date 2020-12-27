@@ -1,0 +1,62 @@
+---
+title: "data_task_practice"
+author: "Ishwara Hegde"
+date: "10/20/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(mfx, tidyverse, hrbrthemes, estimatr, fixest, sandwich, lmtest, AER, lfe, margins,modelsummary)
+
+#Loads a package for more professional plotting 
+
+```
+
+## R Markdown
+
+Loading the data 
+
+```{r cars}
+url <- 'https://vincentarelbundock.github.io/Rdatasets/csv/palmerpenguins/penguins.csv'
+dat <- read.csv(url)
+
+#  Reg plots
+dat$bill_length_cm <- dat$bill_length_mm / 10
+dat$flipper_length_cm <- dat$flipper_length_mm / 10
+
+mod<-lm(bill_length_cm~flipper_length_cm+species,data=dat)
+
+cm <- c('speciesChinstrap' = 'Chinstrap',
+        'speciesGentoo' = 'Gentoo',
+        'flipper_length_cm' = 'Flipper length (cm)')
+
+modelplot(mod,conf_level = 0.95,coef_map = cm,coef_omit = "Interc")+
+         labs(x = 'Coefficients',
+         y = 'Term names',
+         title = 'Linear regression models of "Bill Length (cm)"')+theme_minimal()
+tidy(mod)
+```
+
+## Plots
+
+You can also embed plots, for example:
+
+```{r plots, echo=FALSE}
+# Plot temp
+ggplot(line_df, aes(x = year, y = lifeExp)) +
+    geom_line(colour = "#1380A1", size = 1) +
+    geom_hline(yintercept = 0, size = 1, colour="#333333") +
+    scale_color_ipsum() +
+    labs(title="Living longer",
+         subtitle = "Life expectancy in Malawi 1952-2007")+theme_ipsum_rc()
+```
+
+```{r , tables}
+datasummary(flipper_length_mm ~ (Mean+SD)*species, data = dat)
+
+```
+
+```{r, regressions}
+
+```

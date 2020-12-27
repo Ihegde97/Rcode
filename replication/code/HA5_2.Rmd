@@ -1,0 +1,344 @@
+---
+title: 'HA5: Problem 2'
+author: "Ishwara Hegde, Aleksei Samkov and Jonathan Nieman"
+date: "11/5/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+#loading the packages I will use 
+knitr::opts_chunk$set( warning = FALSE,echo = FALSE,message = FALSE)
+
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, data.table, modelsummary,
+               broom,kableExtra)
+```
+
+
+
+
+```{r data, echo=FALSE}
+# Importing the data :
+data<-fread("../input/sipp2.csv")
+
+#Creating a placeholder data table
+results<-data.table(matrix(0,nrow = 16,ncol = 2))
+
+#P(Veteran)
+j<-1
+for (i in 1950:1953){
+        temp<-tidy(lm(nvstat~nrace,data=data[ u_brthyr>=i-1 & 
+                u_brthyr<=1+i & nrace==0],weights=fnlwgt_5))
+        results[j,1:2]<-temp[1,2:3]
+        j<-j+1
+}
+
+
+#P(Veteran|Eligible)
+
+
+for (i in 1950:1953){
+       temp<-tidy(lm(nvstat~nrace,data=data[ u_brthyr>=i-1 & 
+                u_brthyr<=1+i & nrace==0 & rsncode==1],weights=fnlwgt_5))
+        results[j,1:2]<-temp[1,2:3]
+        j<-j+1
+}
+
+#P(Veteran|Ineligible)
+
+for (i in 1950:1953){
+        temp<-tidy(lm(nvstat~nrace,data=data[ u_brthyr>=i-1 & 
+                u_brthyr<=1+i & nrace==0 & rsncode!=1],weights=fnlwgt_5))
+        results[j,1:2]<-temp[1,2:3]
+        j<-j+1
+}
+
+#diff
+
+#Creating a dummy for eligibility 
+data<-data[rsncode==1, rsn:=1]
+data<-data[rsncode==0 |rsncode == 999, rsn:=0]
+
+#Now I just regress on this dummy to get the estimate 
+for (i in 1950:1953){
+        temp<-tidy(lm(nvstat~rsn,data=data[ u_brthyr>=i-1 & 
+                u_brthyr<=i+1 & nrace==0],weights=fnlwgt_5))
+        results[j,1:2]<-temp[2,2:3]
+        j<-j+1
+}
+
+
+
+
+```
+
+
+
+```{r tab2,echo=FALSE}
+# I clean up the data.table for printing
+
+#data_cute<-data.table(estimates=results[1:16,1],std_errors=results[1:16,2])
+data_cute<-tibble
+data_cute<-tibble(P=results[1:4,V1],
+                  se_p =results[1:4,V2],
+                  P_e=results[5:8,V1],
+                  se_P_e=results[5:8,V2],
+                  P_i=results[9:12,V1],
+                  se_P_i=results[9:12,V2],
+                 diff=results[13:16,V1],
+                  se_diff=results[13:16,V2])
+
+
+cap<-"Veteran Status and Draft Eligibility Whites only"
+tab1<-kbl(data_cute, booktabs = T,caption=cap)%>%
+  kable_styling(latex_options = c("striped","scale_down"))
+tab1
+
+
+```
+
+
+```{r Table 3,message = FALSE, include=FALSE}
+
+
+#Loading the data 
+data2<-fread("../input/cwhsc_new.csv")
+data2<-data2[,iweight:=NULL]
+data2<-data2 %>% rename(iweight=iweight_old)
+
+#Loading cpi_angrist1990 to merge 
+cpi_angrist1990<-fread("../input/cpi_angrist1990.csv")
+data2<-merge(data2,cpi_angrist1990,by='year')
+
+#getting the CPI for 1978
+cpi78<-mean(data2[year==78, cpi],na.rm=T)
+data2<-data2[,cpi:=cpi/cpi78]
+data2<-data2[,cpi:=round(cpi,digits=3)]
+data2<-data2[,cpi2:=cpi^2]
+data2<-data2[,smplsz:= nj-nj0]
+
+#keeping only a subset of obs
+data2<-data2[ year>=81 & byr>=50 & byr<=52,]
+
+#back out the variance from iweights
+data2<-data2[,rlvar:= (1/iweight)*smplsz]
+data2<-data2[,var:= rlvar*cpi2]
+data2<-data2[,nomearn:=(earnings*cpi)]
+
+#Draft eligibility 
+data2<-data2[,eligible:=0]
+data2<-data2[(byr==50 & interval ==1)|(byr==51 & interval<=25)|((byr==52 | byr==53) & interval<=19),eligible:=1]
+
+#White dummy 
+data2<-data2[,white:=0]
+data2<-data2[race==1,white:=1]
+
+#Sum weights across group cells
+data2<-data2[,sumwt:=sum(smplsz),by=.(white,byr,year,eligible,type)]
+
+#Weights for variance
+data2<-data2[,wtmult:= 1/(sumwt)]
+#variance to sum
+data2<-data2[,var_cm:=wtmult*var]
+#numtype 
+data2<-data2[type=="TAXAB",numtype:=1]
+data2<-data2[type=="ADJ",numtype:=2]
+data2<-data2[type=="TOTAL",numtype:=3]
+
+#collapsing
+data3<-data2[,.(var_cm=mean(var_cm), nomearn=mean(nomearn),earnings=mean(earnings), cpi=weighted.mean(x=cpi,w=smplsz)),by=.(white,byr,year,eligible,numtype)]
+
+#creating ids
+data3<-data3[,id:=paste(white,year,numtype,byr, sep="")]
+data3<-data3 %>% pivot_wider(names_from=eligible,
+                             values_from=c(var_cm,nomearn,earnings),id_cols=c(id,numtype,white,year,byr))
+
+#Dropping id
+data3<-data.table(data3)
+data3<-na.omit(data3)
+data3<-data3[,id:=NULL]
+
+#generating a tag 
+data3<-data3[numtype==1,tag:="f"]
+data3<data3[numtype==2,tag:="a"]
+data3<-data3[numtype==3,tag:="w"]
+
+data3<-data3[,numtype:=NULL]
+#generating id 
+data3<-data3[,id:=paste(white,year,byr,sep="")]
+
+#Reshaping again 
+data3<-data3 %>% pivot_wider(names_from=tag,
+                             values_from=c(var_cm_0,nomearn_0,earnings_0,
+                                           var_cm_1,nomearn_1,earnings_1),
+                             id_cols=c(id,year,white,byr))
+data3<-data.table(data3)
+#gen variables
+data3<-data3[,cf:=(nomearn_1_f-nomearn_0_f)]
+data3<-data3[,sef:=(var_cm_1_f+var_cm_0_f)^.5]
+data3<-data3[,cw:=(nomearn_1_w-nomearn_0_w)]
+data3<-data3[,sew:=(var_cm_1_w+var_cm_0_w)^.5]
+data3<-data3[,ca:=(nomearn_1_a-nomearn_0_a)]
+data3<-data3[,sea:=(var_cm_1_a+var_cm_0_a)^.5]
+
+#keeping subset in a new data table 
+data4<-data3[,.(year,white,byr,cf,cw,ca,sef,sew,sea)]
+#Expand 2
+l<-list(data4,data4)
+data4<-rbindlist(l)
+data4<-setorder(data4,cols=byr,year)
+
+#* IMPUTE SIPP PROBABILITIES
+data4<-data4[byr==50,sippp:=0.159]
+data4<-data4[byr==51,sippp:=0.136]
+data4<-data4[byr==52,sippp:=0.105]
+
+data4<-data4[byr==50,sippse:=0.040]
+data4<-data4[byr==51,sippp:=0.043]
+data4<-data4[byr==52,sippp:=0.105]
+
+#Adding back cpi
+data4<-data4[year==81,cpi:=1.394]
+data4<-data4[year==82,cpi:=1.48]
+data4<-data4[year==83,cpi:=1.527]
+data4<-data4[year==84,cpi:=1.592]
+
+
+
+data4<-data4[,serv_c:=ca/(sippp*cpi)]
+data4<-data4[,serv_se:=sea/(sippp*cpi)]
+
+#Creating the matrices 
+whites1<-as.matrix(data4[white==1,])
+nonwhites1<-as.matrix(data4[white==0,])
+
+whites<-matrix(NaN,nrow=nrow(whites1),ncol = 7)
+nonwhites<-matrix(NaN,nrow=nrow(nonwhites1),ncol = 7)
+
+#top var 
+
+top<-nrow(whites1)
+top1<- top -1
+#Naming the matrices
+
+colnames(whites) <- c("Cohort", "Year", "FICA", "Adj FICA",
+			"W-2",	"pe-pn", "Serv Eff")
+
+colnames(nonwhites) <- c("Cohort", "Year", "FICA", "Adj FICA",
+			"W-2",	"pe-pn", "Serv Eff")
+#For loop to populate the matrix
+for (i in seq(1,top1,2)){
+        
+whites[i,2]<-whites1[i,"year"]
+whites[i,3]<-whites1[i,"cf"]
+whites[i,4]<-whites1[i,"ca"]
+whites[i,5]<-whites1[i,"cw"]
+whites[i,7]<-whites1[i,"serv_c"]       
+}
+
+for (i in seq(2,top,2)) {
+        
+        whites[i,3]=whites1[i,"sef"]
+        whites[i,4]=whites1[i,"sea"]
+        whites[i,5]=whites1[i,"sew"]
+        whites[i,7]=whites1[i,"serv_se"]
+}
+
+whites[1,1]=1950
+whites[9,1]=1951
+whites[17,1]=1952
+whites[1,6]=.159
+whites[2,6]=.040
+whites[9,6]=.136
+whites[10,6]=.043
+whites[17,6]=.105
+whites[18,6]=.050
+
+#nonwhites
+
+for (i in seq(1,top1,2)){
+        
+nonwhites[i,2]<-nonwhites1[i,"year"]
+nonwhites[i,3]<-nonwhites1[i,"cf"]
+nonwhites[i,4]<-nonwhites1[i,"ca"]
+nonwhites[i,5]<-nonwhites1[i,"cw"]
+nonwhites[i,7]<-nonwhites1[i,"serv_c"]       
+}
+
+for (i in seq(2,top,2)) {
+        
+        nonwhites[i,3]=nonwhites1[i,"sef"]
+        nonwhites[i,4]=nonwhites1[i,"sea"]
+        nonwhites[i,5]=nonwhites1[i,"sew"]
+        nonwhites[i,7]=nonwhites1[i,"serv_se"]
+}
+
+nonwhites[1,1]=1950
+nonwhites[9,1]=1951
+nonwhites[17,1]=1952
+nonwhites[1,6]=.159
+nonwhites[2,6]=.040
+nonwhites[9,6]=.136
+nonwhites[10,6]=.043
+nonwhites[17,6]=.105
+nonwhites[18,6]=.050
+
+
+```
+
+
+```{r tab3disp}
+# I clean up the data.table for printing
+
+
+cap<-" Wald Estimates"
+tab3<-kbl(whites, booktabs = T,caption=cap)%>%
+  kable_styling(latex_options = c("striped","scale_down"))
+tab3
+
+
+```
+
+
+```{r eqn_3}
+
+cwhsc_new <- fread("../input/cwhsc_new.csv")
+
+# Subset data
+plot_data <- as.data.frame(subset(cwhsc_new, byr>=50 & byr<=53 & type=="TOTAL" & year>=81 & year<=84 & race==1))
+
+# Estimation
+
+y_grouped <- rep(0,nrow(plot_data))
+
+for (i in 1:4){
+  for (j in 1:range(plot_data$interval)[2]){
+    data <- (plot_data$byr==i+49) & (plot_data$interval==j)
+    y_grouped[data] <- mean(plot_data$earnings[data])
+  }
+}
+
+plot_eq3 <- lm(y_grouped ~ plot_data$ps_r + factor(plot_data$year) + factor(plot_data$byr)) 
+
+plot_fig_points <- lm(earnings ~ factor(year) + factor(byr), data=plot_data)
+plot_fig_res    <- plot_fig_points$residuals
+
+plot_fig_probs      <- lm(ps_r ~ factor(byr), data=plot_data)
+x <- plot_fig_probs$residuals
+y <- rep(0, nrow(plot_data))
+
+for (i in 1:4){
+  for (j in 1:range(plot_data$interval)[2]){
+    data <- (plot_data$byr==i+49) & (plot_data$interval==j)
+    y[data] <- mean(plot_fig_res[data])
+  }
+}
+
+```
+
+```{r, fig1}
+
+plot(x,y,main="Earnings and Probability of Veteran Status",
+     xlab="Probability Residual", ylab="Earnings Residual")
+
+```
