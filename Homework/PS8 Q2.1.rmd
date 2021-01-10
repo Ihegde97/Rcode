@@ -1,10 +1,10 @@
 ---
 title: "HA8"
-author: "Ishwara Hegde, Jonathan Nieman, Aleksei Samkov"
+author: "Ishwara Hegde"
 date: "30/11/2020"
 output:
-  html_document:
-    df_print: paged
+  pdf_document: default
+  pdf_dcoument: default
 ---
 ##  Introduction 
 
@@ -73,7 +73,7 @@ therefore its inclusion reduces bias with respect to standard SC.
 
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning = FALSE)
 #As long as this rmd file is in the same folder as the cps_data it should
 #run fine
 
@@ -190,7 +190,20 @@ p_dgp1 <- p1 + p2 + p3 + plot_annotation(
   subtitle = "alpha_0 = alpha_1 = 1"
 )
 
-p_dgp1
+p_ranges_x <- c(ggplot_build(p_dgp1[[1]])$layout$panel_scales_x[[1]]$range$range,
+  ggplot_build(p_dgp1[[2]])$layout$panel_scales_x[[1]]$range$range,
+  ggplot_build(p_dgp1[[3]])$layout$panel_scales_x[[1]]$range$range)
+
+p_ranges_y <-c(ggplot_build(p_dgp1[[1]])$layout$panel_scales_y[[1]]$range$range,
+        ggplot_build(p_dgp1[[2]])$layout$panel_scales_y[[1]]$range$range,
+        ggplot_build(p_dgp1[[3]])$layout$panel_scales_y[[1]]$range$range)
+
+
+p_dgp1 & 
+  xlim(min(p_ranges_x), max(p_ranges_x)) & 
+  ylim(min(p_ranges_y), max(p_ranges_y))
+
+
 ```
 
 It is clear that the bias of the diff-in-diff estimator is larger both in terms
@@ -316,7 +329,21 @@ p_dgp2 <- p4 + p5 + p6 + plot_annotation(
   subtitle= "alpha_0 = alpha_1 = 1"
 )
 
-p_dgp2
+p_ranges_x_2<- c(ggplot_build(p_dgp2[[1]])$layout$panel_scales_x[[1]]$range$range,
+  ggplot_build(p_dgp1[[2]])$layout$panel_scales_x[[1]]$range$range,
+  ggplot_build(p_dgp1[[3]])$layout$panel_scales_x[[1]]$range$range)
+
+p_ranges_y_2<-c(ggplot_build(p_dgp2[[1]])$layout$panel_scales_y[[1]]$range$range,
+        ggplot_build(p_dgp1[[2]])$layout$panel_scales_y[[1]]$range$range,
+        ggplot_build(p_dgp1[[3]])$layout$panel_scales_y[[1]]$range$range)
+
+
+p_dgp2 & 
+  xlim(min(p_ranges_x_2), max(p_ranges_x_2)) & 
+  ylim(min(p_ranges_y_2), max(p_ranges_y_2))
+
+
+
 ```
 
 Under the new DGP, the propensity for treatment is identical across all 
@@ -324,7 +351,3 @@ observations.  That is, assignment to treatment is actually random.
 Here, the bias issue for the diff-in-diff estimator largely vanishes. 
 However, the synthetic diff-in-diff estimator remains more efficient, 
 just as it was for the original DGP with heterogeneity in treatment propensity.
-
-### Conclusion
-
-* 

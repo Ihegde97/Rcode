@@ -1,0 +1,240 @@
+---
+title: "In-class session 5"
+author: "Ishwara Hegde"
+date: "01/01/2021"
+output: pdf_document
+---
+        
+The goal of this in-class session was :
+        
+1. Understand the implementation of cross-fitting and see how it differs from
+cross validation.
+
+2. Implement a doubly robust estimator for tau (TE parameter) and compare it 
+to a simple difference in means that is obtained by cross fitting!
+
+
+## Preamble 
+
+
+```{r setup, include=FALSE}
+### PREAMBLE 
+
+knitr::opts_chunk$set( warning = FALSE,message = FALSE,echo = TRUE)
+
+```
+
+Loading packages and setting seed :
+
+```{r packload}
+
+#Loading the packages needed:
+
+#install.packages('CVXR')
+library(CVXR)
+library(mvtnorm)
+library(glmnet)
+
+
+#Setting the seed and clearing workspace 
+set.seed(1234)
+rm(list = ls())
+
+```
+
+
+Using Dmitrys plot function. Again, I find it a bit too complicated. An 
+alternative with ggplot is easier and I have implemented it in the homework
+exercises.
+
+```{r plotfunc}
+
+my_density_function <- function(x,K,deg){
+
+	x_min <- min(x)
+	x_max <- max(x)
+	range_x <- x_max - x_min
+	low_x <- x_min - 0.2*range_x
+	up_x <- x_max + 0.2*range_x
+	range_full <-up_x- low_x
+	splits <- seq(low_x,up_x,length.out = K+1)
+	mesh_size <- splits[2] - splits[1]
+	centers <- (splits[-1]+splits[-(K+1)])/2
+	counts <- as.vector(table(cut(x,splits,include.lowest = TRUE)))
+	scale <- sum(counts)*mesh_size
+	
+	data_matrix <- splines::ns(centers, df = deg)
+	pois_reg_res <- glm(counts~data_matrix, family = 'poisson')
+	freq_pois <- exp(pois_reg_res$linear.predictors)
+	dens_pois <- freq_pois/scale
+	
+
+	return(cbind(centers,freq_pois,dens_pois))
+}
+	
+```
+
+Setting up some parameters:
+
+```{r params}
+p <- 200
+n <- 200
+beta_0 <- (1:p)^{-2}
+beta_0_norm <- beta_0/sqrt(sum(beta_0^2))
+gamma <- beta_0_norm 
+sigma_0 <- sqrt(0.2)
+sigma_1 <- sqrt(0.2)
+lambda <- 100
+
+
+
+X <-  rmvnorm(n,sigma = diag(rep(1,p)))
+logit <- X%*%gamma*2 
+pi <- exp(logit)/(1+exp(logit))
+pi_tau <- as.numeric(pi > 0.5)
+tau_het <- 1
+
+```
+
+
+Implementing a double-robust estimator:
+
+```{r doublerobust}
+
+B <- 200
+results <- matrix(0, ncol = 2, nrow = B)
+
+for (b in 1:B){
+
+
+	noise_0 <- rnorm(n,sd = sigma_0)
+	noise_1 <- rnorm(n,sd = sigma_1)
+	W <- rbinom(n,1,pi)
+	Y_0 <- X%*%beta_0_norm + noise_0
+	Y_1 <- tau_het + X%*%beta_0_norm + noise_1
+	tau_cond <- mean(tau_het)
+	Y <- Y_0*(1-W) + Y_1*W
+
+
+	W_1 <- as.numeric(W==1)
+	W_0 <- as.numeric(W==0)
+
+	index_1 <- sample(c(TRUE,FALSE),n,replace = TRUE)
+	index_2 <- !index_1
+
+
+	data_x_11 <- X[index_1 & W_1 == 1,]
+	data_y_11 <- Y[index_1 & W_1 == 1,]
+
+
+	cv_glm_11 <- cv.glmnet(data_x_11, data_y_11, family = "gaussian")
+	lambda_11 <- cv_glm_11$lambda.min
+	glm_opt_11 <- glmnet(data_x_11, data_y_11, family = "gaussian",
+	                     lambda =lambda_11)
+
+	data_x_10<- X[index_1 & W_0 == 1,]
+	data_y_10 <- Y[index_1& W_0 == 1,]
+
+	cv_glm_10 <- cv.glmnet(data_x_10, data_y_10, family = "gaussian")
+	lambda_10 <- cv_glm_10$lambda.min
+	glm_opt_10 <- glmnet(data_x_10, data_y_10, family = "gaussian",
+	                     lambda =lambda_11)
+
+
+	data_x_21 <- X[index_2 & W_1 == 1,]
+	data_y_21 <- Y[index_2& W_1 == 1,]
+
+	cv_glm_21 <- cv.glmnet(data_x_21, data_y_21, family = "gaussian")
+	lambda_21 <- cv_glm_21$lambda.min
+	glm_opt_21 <- glmnet(data_x_21, data_y_21, family = "gaussian",
+	                     lambda =lambda_11)
+
+
+	data_x_20<- X[index_2& W_0 == 1,]
+	data_y_20 <- Y[index_2& W_0 == 1,]
+
+	cv_glm_20 <- cv.glmnet(data_x_20, data_y_20, family = "gaussian")
+	lambda_20 <- cv_glm_20$lambda.min
+	glm_opt_20 <- glmnet(data_x_20, data_y_20, family = "gaussian",
+	                     lambda =lambda_11)
+
+
+## prediction
+
+	fit_11 <- predict(glm_opt_21,X)
+	fit_21 <- predict(glm_opt_11,X)
+	fit_10 <- predict(glm_opt_20,X)
+	fit_20<- predict(glm_opt_10,X)
+	hat_m_1 <- rep(0,n)
+	hat_m_0 <- rep(0,n)
+	hat_m_1[index_1] <- fit_11[index_1]
+	hat_m_1[index_2] <- fit_21[index_2]
+	hat_m_0[index_1] <- fit_10[index_1]
+	hat_m_0[index_2] <- fit_20[index_2]
+
+# Now finding the weights as a balancing problem:
+	
+	w_unit_1 <- Variable(n)	
+	t_1 <- Variable(1)
+	obj <- Minimize(1/n^2*sum((W_1*w_unit_1)^2) + lambda*t_1^2)
+	constr <- list(
+		abs(t(W_1*w_unit_1-1)%*%X/n) <= t_1,
+		sum(w_unit_1*W_1)/n == 1
+	)
+
+	problem <- Problem(obj, constraints  = constr)
+	result <- psolve(problem)
+	weights_upd_1 <- result[[1]]
+
+	w_unit_0 <- Variable(n)	
+	t_0 <- Variable(1)
+	obj <- Minimize(1/n^2*sum((W_0*w_unit_0)^2) + lambda*t_0^2)
+	constr <- list(
+		abs(t(W_0*w_unit_0-1)%*%X/n) <= t_0,
+		sum(w_unit_0*W_0)/n == 1
+	)
+
+	problem <- Problem(obj, constraints  = constr)
+	result <- psolve(problem)
+	weights_upd_0 <- result[[1]]
+
+
+# Now constructing the estimators tau_pred and tau_db 
+	
+	tau_pred <- mean(hat_m_1 - hat_m_0)
+	tau_db <- tau_pred + mean(W_1*(Y-hat_m_1)*weights_upd_1) -  mean(W_0*(Y-hat_m_0)*weights_upd_0)
+	
+	results[b,] <- c(tau_db,tau_pred)
+	print(b)
+}
+
+
+
+
+
+
+
+
+bal_est <- my_density_function(results[,1]-tau_cond,100,deg = 3)[,c(1,3)]
+pred_est <- my_density_function(results[,2]-tau_cond,100,deg = 3)[,c(1,3)]
+
+
+
+plot(bal_est,main = 'Distribution of the estimators', xlim = c(-0.8,0.8), 
+     col = 'black',lty = 1,type = 'l',xlab = 'Estimates',ylab = 'Density')
+lines(pred_est, col = 'red',lty = 2)
+abline(v =0, lty = 2,lwd = 0.5,col = 'grey')
+legend('topright',col <- c('black','red',), lty = c(1,2),
+       legend = c('balancing','pred'))
+
+rmse_res <- round(sqrt(colMeans((results-tau_het)^2)),2)
+names(rmse_res) <- c('bal','pred')
+
+
+
+``` 
+
+The doubly robust estimator (black) has a lower bias than the simple estimator 
+tau_pred (red).
+
+
